@@ -13,6 +13,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "commander": "^12.0.0"
+    "axios": "^1.12.2",
+    "clipboardy": "^2.3.0",
+    "commander": "^12.0.0",
+    "sqlite3": "^5.1.7"
   }
 }

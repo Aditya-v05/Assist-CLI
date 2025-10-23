@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 
-// This first line is called a "shebang".
-// It tells the system to execute this file using Node.js.
-
 const { program } = require('commander');
 const { execSync } = require('child_process');
+const clipboardy = require('clipboardy'); 
+const { db, initDb } = require('./database');
+const axios = require('axios'); 
 
 // Define the version and description of your tool
 program
   .version('1.0.0')
   .description('A personal CLI assistant for your day-to-day coding life.');
 
+initDb();
 // Define your first, simple command
 program
   .command('hello')
@@ -126,6 +127,147 @@ program
   });
 
 // ... (your final 'program.parse(process.argv);' line is below this) ...
+// --- Snippet Manager ---
 
-// This line should be at the very bottom
+const snippet = program.command('snippet')
+  .description('Manage your personal code snippets');
+
+// Command: assist snippet add <name> <tag>
+snippet
+  .command('add <name> <tag>')
+  .description('Save the code from your clipboard as a new snippet')
+  .action((name, tag) => {
+    try {
+      const content = clipboardy.readSync(); // Read from clipboard
+      if (!content) {
+        console.error('❌ Your clipboard is empty. Copy some code first!');
+        return;
+      }
+
+      const sql = `INSERT INTO snippets (name, tag, content) VALUES (?, ?, ?)`;
+      db.run(sql, [name, tag, content], function(err) {
+        if (err) {
+          console.error('❌ Error saving snippet:', err.message);
+          console.log('Hint: The snippet "name" must be unique.');
+        } else {
+          console.log(`✅ Snippet "${name}" [${tag}] saved!`);
+        }
+      });
+    } catch (err) {
+      console.error('❌ Could not read from clipboard:', err.message);
+    }
+  });
+
+// Command: assist snippet get <name>
+snippet
+  .command('get <name>')
+  .description('Get a snippet by name and copy it to your clipboard')
+  .action((name) => {
+    const sql = `SELECT content FROM snippets WHERE name = ?`;
+
+    db.get(sql, [name], (err, row) => {
+      if (err) {
+        console.error('❌ Database error:', err.message);
+      } else if (row) {
+        clipboardy.writeSync(row.content); // Write to clipboard
+        console.log(`✅ Copied snippet "${name}" to your clipboard!`);
+      } else {
+        console.error(`❌ No snippet found with the name "${name}".`);
+      }
+    });
+  });
+
+// Command: assist snippet list [tag]
+snippet
+  .command('list [tag]')
+  .description('List all snippets, or filter by tag')
+  .action((tag) => {
+    let sql = `SELECT name, tag FROM snippets ORDER BY tag, name`;
+    let params = [];
+
+    if (tag) {
+      sql = `SELECT name, tag FROM snippets WHERE tag = ? ORDER BY name`;
+      params.push(tag);
+    }
+
+    db.all(sql, params, (err, rows) => {
+      if (err) {
+        console.error('❌ Database error:', err.message);
+      } else if (rows.length === 0) {
+        console.log(tag ? `No snippets found with tag "[${tag}]"` : 'You have no snippets saved.');
+      } else {
+        console.log('--- Your Snippets ---');
+        let currentTag = '';
+        rows.forEach(row => {
+          if (row.tag !== currentTag) {
+            console.log(`\n[${row.tag}]`);
+            currentTag = row.tag;
+          }
+          console.log(`  - ${row.name}`);
+        });
+      }
+    });
+  });
+
+  program
+  .command('git-status')
+  .description('Check the status of your open Pull Requests on GitHub')
+  // This is our first async action!
+  .action(async () => {
+    const token = process.env.GITHUB_TOKEN;
+    const user = process.env.GITHUB_USER;
+
+    if (!token || !user) {
+      console.error('❌ Error: GITHUB_TOKEN and GITHUB_USER environment variables must be set.');
+      console.log('Run: $env:GITHUB_TOKEN="your_token" and $env:GITHUB_USER="your_username"');
+      return;
+    }
+
+    try {
+      // 1. Get the current repository's URL from .git/config
+      const remoteUrl = execSync('git config --get remote.origin.url').toString().trim();
+
+      // 2. Parse the URL to get "owner/repo" (e.g., "google/gemini")
+      // This regex handles both https:// and git@git.com: URLs
+      const repoMatch = remoteUrl.match(/github\.com[:/]([\w.-]+\/[\w.-]+)(\.git)?$/);
+
+      if (!repoMatch || !repoMatch[1]) {
+        console.error('❌ Could not parse GitHub repo name from remote URL.');
+        return;
+      }
+      const ownerRepo = repoMatch[1]; // This will be like "your-name/your-repo"
+
+      console.log(`Checking PRs for ${user} in ${ownerRepo}...\n`);
+
+      // 3. Make the API request
+      const apiUrl = `https://api.github.com/repos/${ownerRepo}/pulls`;
+      const response = await axios.get(apiUrl, {
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        params: {
+          'creator': user,
+          'state': 'open'
+        }
+      });
+
+      // 4. Parse and display the results
+      const prs = response.data;
+      if (prs.length === 0) {
+        console.log('✅ No open pull requests found for you in this repo.');
+        return;
+      }
+
+      console.log('--- Your Open Pull Requests ---');
+      prs.forEach(pr => {
+        console.log(`
+[${pr.number}] ${pr.title} Status: ${pr.draft ? 'Draft 📝' : 'Open ✅'} Reviews: ${pr.requested_reviewers.length > 0 ? pr.requested_reviewers.map(r => r.login).join(', ') : 'None'} URL: ${pr.html_url} `); });
+
+    } catch (error) {
+      console.error(`❌ API Error: ${error.response?.status} ${error.response?.data?.message || error.message}`);
+      console.log('Make sure you are in a git repo and your GITHUB_TOKEN has `repo` scope.');
+    }
+  });
+
 program.parse(process.argv);
