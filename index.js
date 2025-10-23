@@ -270,4 +270,76 @@ snippet
     }
   });
 
+  program
+  .command('prs')
+  .description('Search for all your open PRs across all of GitHub')
+  .action(async () => {
+    const token = process.env.GITHUB_TOKEN;
+    const user = process.env.GITHUB_USER;
+
+    if (!token || !user) {
+      console.error('❌ Error: GITHUB_TOKEN and GITHUB_USER environment variables must be set.');
+      console.log('Run: $env:GITHUB_TOKEN="your_token" and $env:GITHUB_USER="your_username"');
+      return;
+    }
+
+    console.log(`🔍 Searching for all open PRs authored by ${user}...\n`);
+    
+    try {
+      // 1. This time, we use the Search API
+      const apiUrl = 'https://api.github.com/search/issues';
+      
+      // 2. We build a search query. GitHub treats PRs as a type of "issue".
+      // This query means "find items that are a PR, are open, and are authored by me"
+      const searchQuery = `is:pr is:open author:${user}`;
+
+      // 3. Make the API request
+      const response = await axios.get(apiUrl, {
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        params: {
+          q: searchQuery, // The 'q' param is for "query"
+          sort: 'updated',
+          order: 'desc'
+        }
+      });
+
+      // 4. The search results are in a property called 'items'
+      const prs = response.data.items;
+
+      if (prs.length === 0) {
+        console.log('✅ You have no open pull requests. Time to code!');
+        return;
+      }
+
+      console.log(`--- You have ${prs.length} open PR(s) ---`);
+
+      // 5. Group the PRs by repository for a clean look
+      const groupedByRepo = {};
+      prs.forEach(pr => {
+        // The repo URL is in 'pr.repository_url'. We parse it to get the "owner/repo" name.
+        const repoName = pr.repository_url.split('/').slice(-2).join('/');
+        
+        if (!groupedByRepo[repoName]) {
+          groupedByRepo[repoName] = []; // Create an array for this repo if it's new
+        }
+        groupedByRepo[repoName].push(pr);
+      });
+
+      // 6. Loop over our new grouped object and print the results
+      for (const repoName in groupedByRepo) {
+        console.log(`\n📂 \x1b[1m${repoName}\x1b[0m`); // \x1b[1m is for bold text
+        groupedByRepo[repoName].forEach(pr => {
+          console.log(`  [#${pr.number}] ${pr.title.trim()}`);
+          console.log(`    ${pr.html_url}`);
+        });
+      }
+
+    } catch (error) {
+      console.error(`❌ API Error: ${error.response?.status} ${error.response?.data?.message || error.message}`);
+    }
+  });
+
 program.parse(process.argv);
